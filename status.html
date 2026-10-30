@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>設備狀態總覽</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; margin: 0; padding: 16px; background: #f8f9fa; color: #222; }
+        h2 { text-align: center; margin: 8px 0 4px; }
+        .toolbar { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 14px; color: #555; }
+        .toolbar button { padding: 8px 16px; font-size: 15px; border: none; border-radius: 6px; background: #0d6efd; color: #fff; cursor: pointer; }
+        .toolbar button:disabled { background: #9bb8e8; }
+
+        .summary { display: flex; justify-content: center; gap: 12px; margin-bottom: 16px; }
+        .card { flex: 1; max-width: 180px; padding: 12px; border-radius: 10px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.08); text-align: center; }
+        .card .num { font-size: 30px; font-weight: bold; }
+        .card .label { font-size: 13px; color: #666; }
+        .card.ok .num { color: #198754; }
+        .card.out .num { color: #dc3545; }
+
+        .section { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 12px; margin-bottom: 16px; max-width: 900px; margin-left: auto; margin-right: auto; }
+        .section h3 { margin: 4px 0 10px; font-size: 17px; }
+        table { width: 100%; border-collapse: collapse; font-size: 15px; }
+        th, td { padding: 8px 6px; border-bottom: 1px solid #eee; text-align: left; }
+        th { background: #f1f3f5; font-weight: bold; }
+        tr:last-child td { border-bottom: none; }
+
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: bold; }
+        .badge.ok { background: #d1e7dd; color: #0f5132; }
+        .badge.out { background: #f8d7da; color: #842029; }
+        .badge.other { background: #e2e3e5; color: #41464b; }
+        .act-borrow { color: #0d6efd; font-weight: bold; }
+        .act-return { color: #198754; font-weight: bold; }
+
+        .filter { display: flex; gap: 8px; margin-bottom: 10px; }
+        .filter input { flex: 1; padding: 8px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; }
+        .filter select { padding: 8px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; }
+        .empty { text-align: center; color: #888; padding: 16px; }
+        #error { text-align: center; color: #dc3545; font-weight: bold; min-height: 20px; }
+        @media (max-width: 480px) {
+            table { font-size: 13px; }
+            th, td { padding: 6px 4px; }
+            .hide-sm { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <h2>📋 設備狀態總覽</h2>
+    <div class="toolbar">
+        <span id="updated">載入中...</span>
+        <button id="refresh-btn" onclick="loadAll()">🔄 立即更新</button>
+        <label><input type="checkbox" id="auto" checked> 每 10 秒自動更新</label>
+    </div>
+    <div id="error"></div>
+
+    <div class="summary">
+        <div class="card"><div class="num" id="n-total">-</div><div class="label">設備總數</div></div>
+        <div class="card ok"><div class="num" id="n-ok">-</div><div class="label">可借用</div></div>
+        <div class="card out"><div class="num" id="n-out">-</div><div class="label">借出中</div></div>
+    </div>
+
+    <div class="section">
+        <h3>設備清單</h3>
+        <div class="filter">
+            <input id="search" type="text" placeholder="搜尋編號／名稱／廠牌" oninput="renderList()">
+            <select id="status-filter" onchange="renderList()">
+                <option value="">全部狀態</option>
+                <option value="可借用">可借用</option>
+                <option value="借出中">借出中</option>
+            </select>
+        </div>
+        <table>
+            <thead><tr><th>編號</th><th>名稱</th><th class="hide-sm">廠牌</th><th>狀態</th></tr></thead>
+            <tbody id="list-body"><tr><td colspan="4" class="empty">載入中...</td></tr></tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h3>最近借還紀錄</h3>
+        <table>
+            <thead><tr><th>時間</th><th>編號</th><th>名稱</th><th>動作</th><th class="hide-sm">更新後狀態</th></tr></thead>
+            <tbody id="log-body"><tr><td colspan="5" class="empty">載入中...</td></tr></tbody>
+        </table>
+    </div>
+
+    <script>
+        // ★★★ 請替換成您的 GAS 網頁應用程式網址（與 index.html 相同）★★★
+        const API_URL = "https://script.google.com/macros/s/AKfycbwGgKSGN77eJsRI8s3wcrjV5RtYparTVNz6WYsgVyY5vHBJB7QJyYgBhfIsrFUF3fPG/exec";
+        const LOG_LIMIT = 50;
+
+        let items = [];
+        let timer = null;
+
+        function esc(s) {
+            return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        function badge(status) {
+            if (status === "可借用") return '<span class="badge ok">可借用</span>';
+            if (status === "借出中") return '<span class="badge out">借出中</span>';
+            return '<span class="badge other">' + esc(status || "未設定") + '</span>';
+        }
+
+        function renderList() {
+            const q = document.getElementById('search').value.trim().toLowerCase();
+            const sf = document.getElementById('status-filter').value;
+            const rows = items.filter(it => {
+                if (sf && it.status !== sf) return false;
+                if (!q) return true;
+                return (it.id + it.name + it.brand).toLowerCase().includes(q);
+            });
+            const body = document.getElementById('list-body');
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="4" class="empty">沒有符合的設備</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map(it =>
+                `<tr><td>${esc(it.id)}</td><td>${esc(it.name)}</td><td class="hide-sm">${esc(it.brand)}</td><td>${badge(it.status)}</td></tr>`
+            ).join('');
+        }
+
+        function renderLog(records) {
+            const body = document.getElementById('log-body');
+            if (!records.length) {
+                body.innerHTML = '<tr><td colspan="5" class="empty">尚無紀錄</td></tr>';
+                return;
+            }
+            body.innerHTML = records.map(r => {
+                const cls = r.action === "借用" ? "act-borrow" : "act-return";
+                return `<tr><td>${esc(r.time)}</td><td>${esc(r.id)}</td><td>${esc(r.name)}</td>` +
+                       `<td class="${cls}">${esc(r.action)}</td><td class="hide-sm">${badge(r.status)}</td></tr>`;
+            }).join('');
+        }
+
+        async function loadAll() {
+            const btn = document.getElementById('refresh-btn');
+            btn.disabled = true;
+            document.getElementById('error').innerText = "";
+            try {
+                const [listRes, logRes] = await Promise.all([
+                    fetch(API_URL + "?action=list").then(r => r.json()),
+                    fetch(API_URL + "?action=log&limit=" + LOG_LIMIT).then(r => r.json())
+                ]);
+                items = listRes.items || [];
+                document.getElementById('n-total').innerText = items.length;
+                document.getElementById('n-ok').innerText = items.filter(i => i.status === "可借用").length;
+                document.getElementById('n-out').innerText = items.filter(i => i.status === "借出中").length;
+                document.getElementById('updated').innerText = "最後更新：" + (listRes.updatedAt || new Date().toLocaleString());
+                renderList();
+                renderLog(logRes.records || []);
+            } catch (err) {
+                console.error(err);
+                document.getElementById('error').innerText = "讀取資料失敗，請確認 GAS 網址與部署狀態。";
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function setAuto() {
+            if (timer) { clearInterval(timer); timer = null; }
+            if (document.getElementById('auto').checked) {
+                timer = setInterval(loadAll, 10000);
+            }
+        }
+        document.getElementById('auto').addEventListener('change', setAuto);
+
+        loadAll();
+        setAuto();
+    </script>
+</body>
+</html>
