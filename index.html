@@ -20,6 +20,12 @@
         .mode-btn.active-borrow { background: #0d6efd; border-color: #0d6efd; color: #fff; }
         .mode-btn.active-return { background: #198754; border-color: #198754; color: #fff; }
         #mode-hint { font-size: 16px; margin-bottom: 10px; color: #555; }
+
+        /* 開啟狀態總覽分頁的連結按鈕 */
+        .status-link {
+            display: inline-block; margin-bottom: 15px; padding: 8px 18px; font-size: 15px;
+            border-radius: 6px; background: #6c757d; color: #fff; text-decoration: none;
+        }
     </style>
 </head>
 <body>
@@ -31,6 +37,10 @@
         <button id="btn-return" class="mode-btn" onclick="setMode('return')">📥 歸還</button>
     </div>
     <div id="mode-hint">目前模式：<b>借用</b>（掃描後狀態改為「借出中」）</div>
+
+    <!-- 在新分頁開啟設備狀態總覽 -->
+    <a class="status-link" href="status.html" target="_blank" rel="noopener">📋 開啟設備狀態總覽（新分頁）</a>
+    <br>
 
     <!-- 手動選擇鏡頭的下拉選單 -->
     <select id="camera-select"></select>
